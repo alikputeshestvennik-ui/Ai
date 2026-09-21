@@ -5,7 +5,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Проверяем, какие архивы реально закоммичены в корень репозитория.
   detect:
     runs-on: ubuntu-latest
     outputs:
@@ -33,7 +32,6 @@ jobs:
           echo "echo_project.zip found: ${{ steps.detect.outputs.has_project }}"
           echo "echo_wear.zip found:    ${{ steps.detect.outputs.has_wear }}"
 
-  # --- Телефонное приложение (Echo) ---
   build-project:
     needs: detect
     if: needs.detect.outputs.has_project == 'true'
@@ -56,41 +54,34 @@ jobs:
       - name: Grant execute to gradlew
         run: chmod +x gradlew || true
 
-      # Пытаемся восстановить keystore из предыдущей сборки или из secrets
-      - name: Restore keystore
-        uses: dawidd6/action-download-artifact@v3
-        continue-on-error: true
-        with:
-          name: echo-keystore
-          path: app/build/generated
-          if_no_artifact_found: ignore
-
-      - name: Generate or restore keystore
+      - name: Restore permanent signing keystore
         env:
           ECHO: ${{ secrets.ECHO }}
           ECHO_KEYSTORE_BASE64: ${{ secrets.ECHO_KEYSTORE_BASE64 }}
         run: |
-          mkdir -p app/build/generated
-          if [ -n "$ECHO_KEYSTORE_BASE64" ]; then
-            echo "Using keystore from GitHub secrets"
-            echo "$ECHO_KEYSTORE_BASE64" | base64 -d > app/build/generated/echo-release.jks
-          elif [ -f "app/build/generated/echo-release.jks" ]; then
-            echo "Using keystore from previous build artifact"
-          else
-            echo "Generating new keystore (first build)"
-            keytool -genkeypair -v \
-              -keystore app/build/generated/echo-release.jks \
-              -alias echo \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass "$ECHO" -keypass "$ECHO" \
-              -dname "CN=Echo, OU=Echo, O=Echo, L=Unknown, S=Unknown, C=US"
+          set -euo pipefail
+          if [ -z "${ECHO_KEYSTORE_BASE64:-}" ]; then
+            echo "::error::ECHO_KEYSTORE_BASE64 is not configured."
+            exit 1
           fi
+          mkdir -p app/build/generated
+          printf '%s' "$ECHO_KEYSTORE_BASE64" | base64 --decode > app/build/generated/echo-release.jks
+          test -s app/build/generated/echo-release.jks
+
+          echo "Signing certificate:"
+          keytool -list -v \
+            -keystore app/build/generated/echo-release.jks \
+            -alias echo \
+            -storepass "$ECHO" |
+            grep -E "Alias name:|SHA256:"
 
       - name: Build release APK
         env:
           ECHO: ${{ secrets.ECHO }}
           GEMINI: ${{ secrets.GEMINI }}
+          ECHO_KEYSTORE_FILE: ${{ github.workspace }}/app/build/generated/echo-release.jks
         run: |
+          set -e
           if [ -f gradlew ]; then
             ./gradlew :app:assembleRelease --stacktrace
           else
@@ -102,18 +93,8 @@ jobs:
         with:
           name: echo-app-release
           path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
 
-      # Сохраняем keystore для будущих сборок (90 дней)
-      - name: Upload keystore artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: echo-keystore
-          path: app/build/generated/echo-release.jks
-          retention-days: 90
-          if-no-files-found: warn
-
-  # --- Приложение для часов (Galaxy Watch) ---
   build-wear:
     needs: detect
     if: needs.detect.outputs.has_wear == 'true'
@@ -124,9 +105,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # FIX: архив лежит в корне репо, а все последующие шаги этого job'а
-      # выполняются с working-directory: echo_wear — поэтому распаковываем
-      # именно В echo_wear/, а не в корень ("-d .").
       - name: Unzip echo_wear.zip
         working-directory: .
         run: unzip -o echo_wear.zip -d echo_wear
@@ -143,40 +121,33 @@ jobs:
       - name: Grant execute to gradlew
         run: chmod +x gradlew || true
 
-      # Пытаемся восстановить keystore из предыдущей сборки или из secrets
-      - name: Restore keystore
-        uses: dawidd6/action-download-artifact@v3
-        continue-on-error: true
-        with:
-          name: echo-keystore
-          path: app/build/generated
-          if_no_artifact_found: ignore
-
-      - name: Generate or restore keystore
+      - name: Restore permanent signing keystore
         env:
           ECHO: ${{ secrets.ECHO }}
           ECHO_KEYSTORE_BASE64: ${{ secrets.ECHO_KEYSTORE_BASE64 }}
         run: |
-          mkdir -p app/build/generated
-          if [ -n "$ECHO_KEYSTORE_BASE64" ]; then
-            echo "Using keystore from GitHub secrets"
-            echo "$ECHO_KEYSTORE_BASE64" | base64 -d > app/build/generated/echo-release.jks
-          elif [ -f "app/build/generated/echo-release.jks" ]; then
-            echo "Using keystore from previous build artifact"
-          else
-            echo "Generating new keystore (first build)"
-            keytool -genkeypair -v \
-              -keystore app/build/generated/echo-release.jks \
-              -alias echo \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass "$ECHO" -keypass "$ECHO" \
-              -dname "CN=Echo, OU=Echo, O=Echo, L=Unknown, S=Unknown, C=US"
+          set -euo pipefail
+          if [ -z "${ECHO_KEYSTORE_BASE64:-}" ]; then
+            echo "::error::ECHO_KEYSTORE_BASE64 is not configured."
+            exit 1
           fi
+          mkdir -p app/build/generated
+          printf '%s' "$ECHO_KEYSTORE_BASE64" | base64 --decode > app/build/generated/echo-release.jks
+          test -s app/build/generated/echo-release.jks
+
+          echo "Signing certificate:"
+          keytool -list -v \
+            -keystore app/build/generated/echo-release.jks \
+            -alias echo \
+            -storepass "$ECHO" |
+            grep -E "Alias name:|SHA256:"
 
       - name: Build release APK
         env:
           ECHO: ${{ secrets.ECHO }}
+          ECHO_KEYSTORE_FILE: ${{ github.workspace }}/echo_wear/app/build/generated/echo-release.jks
         run: |
+          set -e
           if [ -f gradlew ]; then
             ./gradlew :app:assembleRelease --stacktrace
           else
@@ -188,4 +159,4 @@ jobs:
         with:
           name: echo-wear-release
           path: echo_wear/app/build/outputs/apk/release/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
