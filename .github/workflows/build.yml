@@ -93,6 +93,8 @@ jobs:
   # --- Приложение для часов (Galaxy Watch) ---
   # echo_wear.zip уже содержит внутри себя папку echo_wear/, поэтому просто
   # распаковываем его в корень и работаем внутри получившейся папки.
+  # Подписывается тем же способом, что и телефонное приложение: keystore
+  # генерируется на лету, пароль = alias = секрет ECHO.
   build-wear:
     needs: detect
     if: needs.detect.outputs.has_wear == 'true'
@@ -119,17 +121,31 @@ jobs:
       - name: Grant execute to gradlew
         run: chmod +x gradlew || true
 
-      - name: Build debug APK
+      - name: Generate release keystore
+        env:
+          ECHO: ${{ secrets.ECHO }}
+        run: |
+          mkdir -p app/build/generated
+          keytool -genkeypair -v \
+            -keystore app/build/generated/echo-release.jks \
+            -alias echo \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass "$ECHO" -keypass "$ECHO" \
+            -dname "CN=Echo, OU=Echo, O=Echo, L=Unknown, S=Unknown, C=US"
+
+      - name: Build release APK
+        env:
+          ECHO: ${{ secrets.ECHO }}
         run: |
           if [ -f gradlew ]; then
-            ./gradlew :app:assembleDebug --stacktrace
+            ./gradlew :app:assembleRelease --stacktrace
           else
-            gradle :app:assembleDebug --stacktrace
+            gradle :app:assembleRelease --stacktrace
           fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: echo-wear-debug
-          path: echo_wear/app/build/outputs/apk/debug/*.apk
+          name: echo-wear-release
+          path: echo_wear/app/build/outputs/apk/release/*.apk
           if-no-files-found: warn
