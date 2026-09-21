@@ -124,9 +124,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # FIX: архив лежит в корне репо, а все последующие шаги этого job'а
+      # выполняются с working-directory: echo_wear — поэтому распаковываем
+      # именно В echo_wear/, а не в корень ("-d .").
       - name: Unzip echo_wear.zip
         working-directory: .
-        run: unzip -o echo_wear.zip -d .
+        run: unzip -o echo_wear.zip -d echo_wear
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
