@@ -34,7 +34,6 @@ jobs:
           echo "echo_wear.zip found:    ${{ steps.detect.outputs.has_wear }}"
 
   # --- Телефонное приложение (Echo) ---
-  # echo_project.zip распаковывается прямо в корень (внутри архива нет обёртки).
   build-project:
     needs: detect
     if: needs.detect.outputs.has_project == 'true'
@@ -57,20 +56,35 @@ jobs:
       - name: Grant execute to gradlew
         run: chmod +x gradlew || true
 
-      # В архиве нет заранее сгенерированного keystore — создаём его на лету,
-      # как описано в SIGNING.md: пароль = alias = секрет ECHO.
-      # ВНИМАНИЕ: ключ не сохраняется между сборками, апдейт поверх старого APK не гарантирован.
-      - name: Generate release keystore
+      # Пытаемся восстановить keystore из предыдущей сборки или из secrets
+      - name: Restore keystore
+        uses: dawidd6/action-download-artifact@v3
+        continue-on-error: true
+        with:
+          name: echo-keystore
+          path: app/build/generated
+          if_no_artifact_found: ignore
+
+      - name: Generate or restore keystore
         env:
           ECHO: ${{ secrets.ECHO }}
+          ECHO_KEYSTORE_BASE64: ${{ secrets.ECHO_KEYSTORE_BASE64 }}
         run: |
           mkdir -p app/build/generated
-          keytool -genkeypair -v \
-            -keystore app/build/generated/echo-release.jks \
-            -alias echo \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass "$ECHO" -keypass "$ECHO" \
-            -dname "CN=Echo, OU=Echo, O=Echo, L=Unknown, S=Unknown, C=US"
+          if [ -n "$ECHO_KEYSTORE_BASE64" ]; then
+            echo "Using keystore from GitHub secrets"
+            echo "$ECHO_KEYSTORE_BASE64" | base64 -d > app/build/generated/echo-release.jks
+          elif [ -f "app/build/generated/echo-release.jks" ]; then
+            echo "Using keystore from previous build artifact"
+          else
+            echo "Generating new keystore (first build)"
+            keytool -genkeypair -v \
+              -keystore app/build/generated/echo-release.jks \
+              -alias echo \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$ECHO" -keypass "$ECHO" \
+              -dname "CN=Echo, OU=Echo, O=Echo, L=Unknown, S=Unknown, C=US"
+          fi
 
       - name: Build release APK
         env:
@@ -90,11 +104,16 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: warn
 
+      # Сохраняем keystore для будущих сборок (90 дней)
+      - name: Upload keystore artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: echo-keystore
+          path: app/build/generated/echo-release.jks
+          retention-days: 90
+          if-no-files-found: warn
+
   # --- Приложение для часов (Galaxy Watch) ---
-  # echo_wear.zip уже содержит внутри себя папку echo_wear/, поэтому просто
-  # распаковываем его в корень и работаем внутри получившейся папки.
-  # Подписывается тем же способом, что и телефонное приложение: keystore
-  # генерируется на лету, пароль = alias = секрет ECHO.
   build-wear:
     needs: detect
     if: needs.detect.outputs.has_wear == 'true'
@@ -121,17 +140,35 @@ jobs:
       - name: Grant execute to gradlew
         run: chmod +x gradlew || true
 
-      - name: Generate release keystore
+      # Пытаемся восстановить keystore из предыдущей сборки или из secrets
+      - name: Restore keystore
+        uses: dawidd6/action-download-artifact@v3
+        continue-on-error: true
+        with:
+          name: echo-keystore
+          path: app/build/generated
+          if_no_artifact_found: ignore
+
+      - name: Generate or restore keystore
         env:
           ECHO: ${{ secrets.ECHO }}
+          ECHO_KEYSTORE_BASE64: ${{ secrets.ECHO_KEYSTORE_BASE64 }}
         run: |
           mkdir -p app/build/generated
-          keytool -genkeypair -v \
-            -keystore app/build/generated/echo-release.jks \
-            -alias echo \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass "$ECHO" -keypass "$ECHO" \
-            -dname "CN=Echo, OU=Echo, O=Echo, L=Unknown, S=Unknown, C=US"
+          if [ -n "$ECHO_KEYSTORE_BASE64" ]; then
+            echo "Using keystore from GitHub secrets"
+            echo "$ECHO_KEYSTORE_BASE64" | base64 -d > app/build/generated/echo-release.jks
+          elif [ -f "app/build/generated/echo-release.jks" ]; then
+            echo "Using keystore from previous build artifact"
+          else
+            echo "Generating new keystore (first build)"
+            keytool -genkeypair -v \
+              -keystore app/build/generated/echo-release.jks \
+              -alias echo \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$ECHO" -keypass "$ECHO" \
+              -dname "CN=Echo, OU=Echo, O=Echo, L=Unknown, S=Unknown, C=US"
+          fi
 
       - name: Build release APK
         env:
